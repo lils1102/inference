@@ -1,12 +1,12 @@
-# 99. Codex Master Prompt v1
+# 20. Module Task Breakdown for Codex
 
 ## 1. 本文件结论
 
-本文件是给后续 Codex 的主提示词和硬约束汇总：先补全文档树、ADR、benchmark plan 和任务拆解，不写 Phase 1 实现代码，不把竞品或 Phase 2 存储系统写入 backend。
+后续 Codex 任务必须从文档、ADR 和 benchmark plan 派生，不应直接进入 C++/CUDA/RDMA/scheduler/runtime/kernel 实现。每个实现任务前必须有模块边界、指标、MVP 和风险。
 
 ## 2. 模块目标
 
-让后续 Codex 在上下文不足时仍能恢复正确项目定义、Phase 1/Phase 2 边界、硬件不确定性和 benchmark-first 工作方式。
+把 Phase 1 拆成可派发的研究、设计、benchmark 和实现前置任务，保持 Phase 1/Phase 2 边界清晰。
 
 ## 3. 非目标
 
@@ -20,19 +20,19 @@
 
 ## 5. 核心设计
 
-提示词包含角色、项目定义、硬件目标、Phase 1 范围、硬约束、分布式内存层、系统中心、文档清单、ADR 清单、竞品比较、GPU kernel 策略、scheduler 阶段、benchmark plan 和输出要求。
+任务按 Documentation -> Benchmark Harness -> Runtime Skeleton -> Module MVP -> Optimization RFC -> Kernel RFC 分层。每个任务必须包含输入文档、禁止项、验收指标、baseline、rollback。Phase 2 KVStore 相关任务只能是 seam 或未来 ADR，不得进入 Phase 1 implementation backlog。
 
 ## 6. 数据结构草案
 
-PromptSection(id, purpose, hard_constraints, required_outputs)；ForbiddenScope(item, phase, reason)；HandoffChecklist(doc_tree, adr, benchmark, pr_description)。
+CodexTask(id, module, phase, inputs, outputs, metrics, forbidden_scope, reviewer)；Milestone(name, tasks, exit_criteria)；ImplementationTicket(module, mvp, benchmark, risks)。
 
 ## 7. 关键 API 草案
 
-load_master_prompt()、validate_codex_output(files)、check_forbidden_scope(diff)、summarize_pr_requirements()。这些是 handoff 流程草案，不是运行时代码。
+derive_tasks_from_doc(module)、validate_task_scope(task)、attach_benchmark(task, suite)、mark_phase2_seam(task)。
 
 ## 8. 执行流程
 
-后续 Codex 先读 README、00-02、03、16、17、ADR，再执行具体任务。若发现需求涉及 storage、CXL/DPU、3FS dependency 或 NVMe hot path，应停止并改为 Phase 2 seam / ADR 讨论。
+先完成 benchmark discovery 和 baseline truth layer，再做 execution graph/serving skeleton，再接 memory/KV/MoE/scheduler/speculative/Agent/structured/kernel。每个 optimization 先写 RFC 和 benchmark，不直接默认实现。
 
 ## 9. 性能瓶颈
 
@@ -44,7 +44,7 @@ load_master_prompt()、validate_codex_output(files)、check_forbidden_scope(diff
 
 ## 11. MVP 范围
 
-完整主提示词、文件清单、禁止项、benchmark 指标和 PR 描述要求。
+任务清单、模块依赖图、阶段门、禁止项检查表和后续 PR 切分建议。
 
 ## 12. 风险
 
@@ -56,13 +56,3 @@ load_master_prompt()、validate_codex_output(files)、check_forbidden_scope(diff
 - 对硬件拓扑、竞品性能、H20 kernel 行为和跨节点通信收益的判断，默认写成“不确定，需要 benchmark 或调研确认”。
 - Hot decode KV 必须在 GPU HBM；Phase 2 persistent KVStore 只能作为 seam；3FS 只能作为竞品组合栈组件参与对比。
 - 后续实现任务必须引用本文件的 MVP、指标和风险，并经过 `16_benchmark_plan_cn.md` 的验证设计。
-
-## 附录：既有边界摘要
-
-本次 Full Documentation Pass 保留 main 分支既有边界，并将其结构化到上方 13 个章节：
-
-- 项目不是 vLLM、SGLang、TensorRT-LLM、NVIDIA Dynamo、LMCache、Mooncake 或 3FS 的 wrapper/backend。
-- Phase 1 只做 distributed memory-native GPU inference engine，不设计 persistent KVStore、NVMe restore、GDR storage I/O、storage-backed Agent State 或 3FS 替代品。
-- Distributed Memory Fabric 是显式运行时内存层，覆盖 L0 local HBM、L1 peer HBM、L2 cross-node GPU HBM 和 L3 CPU DRAM/pinned metadata/staging。
-- 系统中心是 Distributed Execution Graph；Agent 能力是可选 metadata layer，不强迫外部 Agent app 改协议。
-- 所有拓扑、通信、kernel 和竞品性能判断都不确定，需要 benchmark discovery 或调研确认。
