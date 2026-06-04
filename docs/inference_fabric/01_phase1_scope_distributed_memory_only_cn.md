@@ -1,171 +1,68 @@
 # 01. Phase 1 Scope：Distributed Memory Only
 
-## 结论
+## 1. 本文件结论
 
-Phase 1 的目标是构建：
+Phase 1 只做 Distributed memory-native GPU inference engine。分布式内存层覆盖 GPU HBM、peer GPU HBM、cross-node GPU HBM 和 CPU DRAM / pinned memory，不设计 persistent KVStore 或 storage-backed hot path。
 
-```text
-Distributed memory-native GPU inference engine
-```
+## 2. 模块目标
 
-也就是先完成一个通用、原生分布式、GPU-first 的推理引擎；它具备分布式内存层、内存态 KV/State Runtime、MoE-native Runtime、Agent-aware metadata runtime、draft/verify runtime 和 benchmark/profiling 基础设施。
+固定 Phase 1 范围，明确包含模块、排除项、hot path 语义和 Phase 2 seam，防止把持久化存储、3FS 或硬件 offload 误写入当前架构。
 
-Phase 1 不设计持久化 KVStore，不设计 NVMe SSD KV restore，不设计 3FS 替代品。
+## 3. 非目标
 
-## Phase 1 包含
+- 不把 vLLM、SGLang、TensorRT-LLM、NVIDIA Dynamo、LMCache、Mooncake、3FS 作为 execution backend。
+- Phase 1 不设计持久化 KVStore、NVMe SSD KV restore、GDR KV storage I/O、storage-backed Agent State 或 3FS 替代品。
+- 不依赖 CXL、DPU / SmartNIC offload、PIM、FPGA；不把 storage 放入 decode hot path。
 
-### 1. 通用 Serving 能力
+## 4. 第一性原理瓶颈
 
-必须支持：
+推理系统瓶颈来自 queueing_delay + prefill_cost + runtime_KV_state_cost + decode_steps × per_decode_step_cost + communication_cost + scheduler_overhead + tool_or_agent_wait。本模块必须说明自己影响哪些 cost term，不能用架构口号替代实测。
 
-- OpenAI-compatible API。
-- Streaming generation。
-- Chat completion / completion。
-- Structured output / tool calling。
-- HF safetensors loader。
-- tokenizer.json / chat template。
-- Continuous batching。
-- Chunked prefill。
-- Paged KV baseline。
-- Prefix cache baseline。
-- Speculative decoding baseline。
-- Multi-node deployment baseline。
-- Observability / profiling / metrics。
+## 5. 核心设计
 
-### 2. Distributed Execution Graph
+Phase 1 由通用 serving、Distributed Execution Graph、Distributed Scheduler、Distributed Memory Fabric、In-memory KV/State Runtime、MoE-native Runtime、Speculative Runtime、Agent Metadata Runtime、GPU Kernel Strategy 和 Benchmark/Profiling 构成。Hot decode KV 必须在 GPU HBM，跨节点 KV 只能通过显式迁移、materialization 或 KV-owner-side attention execution 处理。
 
-系统中心不是 Agent Runtime，也不是单机 engine，而是 Distributed Execution Graph。
+## 6. 数据结构草案
 
-Execution graph 应能表达：
+PhaseScope(include_modules, exclude_modules, seam_modules)；MemoryTier(L0/L1/L2/L3, medium, latency_class, allowed_ops)；HotPathInvariant(name, forbidden_paths, validation_metric)。
 
-- Prefill。
-- Decode。
-- Attention。
-- MoE expert dispatch / compute / combine。
-- Draft。
-- Verify。
-- Structured output mask / sampling。
-- KV migration / compaction。
-- Agent metadata-driven branch / workflow hint。
+## 7. 关键 API 草案
 
-### 3. Distributed Memory Fabric
+is_phase1_allowed(component)、classify_memory_tier(buffer)、plan_kv_action(block, source, target)、assert_no_storage_hot_path(execution_plan)。
 
-Phase 1 的运行时内存层覆盖：
+## 8. 执行流程
 
-```text
-L0: Local GPU HBM
-L1: Same-node peer GPU HBM
-L2: Cross-node GPU HBM through RDMA / GPUDirect RDMA / NCCL / P2P
-L3: CPU DRAM / pinned memory / metadata / staging buffers
-```
+请求进入 serving 后由 scheduler 在 L0/L1/L2/L3 之间做显式 placement。若 hot KV 不在本地 GPU，策略只能是迁移后本地 attention、在 KV owner GPU group 上执行 attention、remote-prefix + local-suffix merge 或重算 prefix。
 
-它是显式调度、显式迁移、拓扑感知的 runtime memory fabric，不是 CXL 式透明远端内存。
+## 9. 性能瓶颈
 
-### 4. In-memory KV/State Runtime
+主要瓶颈包括 HBM 带宽、KV block 迁移字节数、跨节点同步、NCCL/RDMA latency、expert queueing、small GEMM efficiency、structured mask overhead、scheduler tick overhead 和 Agent/tool wait。任何涉及 H20 拓扑、NVLink/NVSwitch/PCIe/RDMA/GDR 的判断均不确定，需要 benchmark discovery 确认。
 
-Phase 1 只支持内存态状态：
+## 10. Benchmark / profiling 指标
 
-- GPU HBM hot KV。
-- Peer GPU KV。
-- Cross-node KV materialization。
-- CPU DRAM / pinned warm metadata。
-- Prefix index。
-- KV block table。
-- Copy-on-write KV。
-- Session KV。
-- Branch KV。
-- Tool-schema KV。
-- KV pin / unpin / eviction。
-- KV migration / compaction。
+必须映射到：TTFT、TPOT、goodput under SLO、p99 latency、GPU utilization、HBM efficiency、KV bytes moved、prefix hit rate、expert dispatch latency、expert imbalance、accepted tokens per verify、agent task completion time、GPU seconds per task、cost per task。模块级 benchmark 应记录 raw trace、配置、版本、硬件拓扑 profile 和 p50/p95/p99。
 
-不支持持久化 KV snapshot。
+## 11. MVP 范围
 
-### 5. MoE-native Runtime
+Level 0/1 API、基本 continuous batching、chunked prefill、paged KV、prefix cache、基础多节点通信、MoE dispatch、speculative draft/verify 和完整观测指标。
 
-MoE expert 是系统级资源。Phase 1 需要设计：
+## 12. 风险
 
-- ExpertPlacementTable。
-- Expert hotness profiling。
-- Expert queueing。
-- Expert dispatch / combine。
-- Grouped GEMM batching。
-- Hot expert replication，至少作为设计目标。
-- Cross-request expert coalescing。
-- Expert locality routing。
-- KV locality + expert locality joint scheduling。
+主要风险是范围膨胀、与成熟竞品的通用 serving 差距、未实测拓扑导致错误 parallelism、内存状态一致性复杂、优化收益只在窄 workload 成立、以及把 Phase 2 storage seam 误放入 Phase 1。
 
-### 6. Agent Metadata Runtime
+## 13. Implementation Notes
 
-Agent-aware 能力不能强依赖外部 Agent app 改协议。
+- 本文件只定义 Markdown 架构、ADR、benchmark plan、模块边界和任务拆解，不包含 C++、CUDA、RDMA、scheduler、runtime 或 kernel 实现代码。
+- 对硬件拓扑、竞品性能、H20 kernel 行为和跨节点通信收益的判断，默认写成“不确定，需要 benchmark 或调研确认”。
+- Hot decode KV 必须在 GPU HBM；Phase 2 persistent KVStore 只能作为 seam；3FS 只能作为竞品组合栈组件参与对比。
+- 后续实现任务必须引用本文件的 MVP、指标和风险，并经过 `16_benchmark_plan_cn.md` 的验证设计。
 
-Phase 1 支持三档：
+## 附录：既有边界摘要
 
-```text
-Level 0: 普通 OpenAI API，无侵入。
-Level 1: 可选 metadata hints，例如 session_id、task_id、repo_id、branch_id、tool_schema_id。
-Level 2: 未来 SDK / MCP / LSP / Git adapter seam。
-```
+本次 Full Documentation Pass 保留 main 分支既有边界，并将其结构化到上方 13 个章节：
 
-Phase 1 实现 Level 0 和 Level 1；Level 2 留接口 seam。
-
-### 7. Speculative Draft/Verify Runtime
-
-投机解码不是单个 flag，而是 execution graph 的子图。
-
-Phase 1 需要支持或预留：
-
-- Strict speculative decoding。
-- Prompt lookup / n-gram。
-- Draft model pool。
-- Target verifier pool。
-- Tree verification seam。
-- Structured-output speculation seam。
-- V4-Flash draft + V4-Pro verify 作为旗舰方向。
-
-## Phase 1 不包含
-
-明确不做：
-
-```text
-Persistent KVStore
-All-flash KV snapshot store
-NVMe SSD KV restore
-GDR KV storage I/O
-Restart-time KV recovery
-Storage-backed Agent State
-3FS replacement
-CXL memory
-DPU / SmartNIC offload
-PIM / FPGA
-```
-
-## Phase 2 seam
-
-Phase 2 可以接入自研分布式全闪 KVCache Store，作为持久化存储层，用于：
-
-- KV snapshot 持久化。
-- Long-context KV restore。
-- P/D KV handoff。
-- Cross-session durable reuse。
-- Workflow replay。
-- Failure recovery。
-
-但 Phase 1 只在接口层保留 seam，不设计该系统。
-
-## 成功标准
-
-Phase 1 成功标准不是“全部指标绝对第一”，而是：
-
-- 普通 serving 不明显输给 vLLM/SGLang。
-- 32×H20 多节点 serving 可运行。
-- MoE serving 在目标模型上有可证明优势。
-- Hot/warm high-prefix-reuse 场景优于 request-level engine。
-- Agent metadata 场景可以降低 task-level latency 或 GPU seconds/task。
-- Benchmark suite 可复现、可对比。
-
-## Implementation Notes
-
-- Codex 后续不得把 KVStore、3FS、CXL、DPU 写入 Phase 1 主架构。
-- 所有 Phase 1 文档都要标明是否属于 hot path。
-- Decode hot KV 必须在 GPU HBM。
-- Cross-node KV 访问必须是 explicit transfer 或 KV-owner-side execution，不能是 transparent remote memory。
+- 项目不是 vLLM、SGLang、TensorRT-LLM、NVIDIA Dynamo、LMCache、Mooncake 或 3FS 的 wrapper/backend。
+- Phase 1 只做 distributed memory-native GPU inference engine，不设计 persistent KVStore、NVMe restore、GDR storage I/O、storage-backed Agent State 或 3FS 替代品。
+- Distributed Memory Fabric 是显式运行时内存层，覆盖 L0 local HBM、L1 peer HBM、L2 cross-node GPU HBM 和 L3 CPU DRAM/pinned metadata/staging。
+- 系统中心是 Distributed Execution Graph；Agent 能力是可选 metadata layer，不强迫外部 Agent app 改协议。
+- 所有拓扑、通信、kernel 和竞品性能判断都不确定，需要 benchmark discovery 或调研确认。

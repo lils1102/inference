@@ -1,97 +1,68 @@
 # 00. Project Charter：Inference Fabric
 
-## 结论
+## 1. 本文件结论
 
-Inference Fabric 的 Phase 1 定位为：
+Inference Fabric 是 Agent-aware、MoE-native、KV-memory-native、Distributed-native 的通用 GPU 推理引擎。它必须先具备通用 serving 入场券，再在 Agent/workflow、MoE、long-context、高 prefix reuse、多节点和 speculative runtime 上形成 Target Pareto SOTA。
 
-```text
-面向未来的 Agent-aware、MoE-native、KV-memory-native、Distributed-native 通用 GPU 推理引擎。
-```
+## 2. 模块目标
 
-它首先必须是一个通用推理引擎，具备通用 serving 能力；然后通过原生分布式执行图、分布式内存层、MoE expert runtime、Agent metadata runtime、speculative draft/verify runtime 等能力，在 Agent workflow、MoE、long-context、high-prefix-reuse、multi-node serving 上超过当前组合式 SOTA 推理栈。
+给出项目定位、目标 workload、硬件目标、Phase 1 交付边界、竞品关系和成功标准，作为所有后续模块文档的上位约束。
 
-## 非目标
+## 3. 非目标
 
-本项目不是以下系统的 wrapper，也不把它们作为 execution backend：
+- 不把 vLLM、SGLang、TensorRT-LLM、NVIDIA Dynamo、LMCache、Mooncake、3FS 作为 execution backend。
+- Phase 1 不设计持久化 KVStore、NVMe SSD KV restore、GDR KV storage I/O、storage-backed Agent State 或 3FS 替代品。
+- 不依赖 CXL、DPU / SmartNIC offload、PIM、FPGA；不把 storage 放入 decode hot path。
 
-```text
-vLLM
-SGLang
-TensorRT-LLM
-NVIDIA Dynamo
-LMCache
-Mooncake
-3FS
-```
+## 4. 第一性原理瓶颈
 
-它们仅作为：
+推理系统瓶颈来自 queueing_delay + prefill_cost + runtime_KV_state_cost + decode_steps × per_decode_step_cost + communication_cost + scheduler_overhead + tool_or_agent_wait。本模块必须说明自己影响哪些 cost term，不能用架构口号替代实测。
 
-- 竞品。
-- benchmark 对照组。
-- 技术参考对象。
-- 需要在目标 workload 上超越的组合式推理栈。
+## 5. 核心设计
 
-## 当前目标硬件
+系统中心是 Distributed Execution Graph。API Compatibility Layer 接收 OpenAI-compatible 请求，经 Request Normalizer / Metadata Extractor 生成 General Serving Context 和可选 Agent Context，再交给 Global Distributed Scheduler，最后映射到 Model Runtime、KV Memory Runtime、MoE Runtime、Speculative Runtime、Communication Fabric 和 GPU Kernel Runtime。
 
-```text
-4 nodes × 8 × H20 GPUs × 96GB HBM
-Total: 32 GPUs, about 3TB HBM
-```
+## 6. 数据结构草案
 
-具体 GPU 拓扑、NVLink/NVSwitch、PCIe、RDMA、GPUDirect RDMA 能力必须通过 benchmark discovery 实测确认，不能在架构文档中静态假设。
+ProjectCharter(project_name, target_workloads, phase1_includes, phase1_excludes, target_hardware, success_metrics)；WorkloadProfile(type, model, prompt_len, output_len, reuse_pattern, slo)；SotaClaim(scope, baseline, metric_set, evidence)。
 
-## 项目核心假设
+## 7. 关键 API 草案
 
-1. 通用 serving 是入场券。没有 OpenAI-compatible API、HF model loading、continuous batching、paged KV、structured output、multi-node deployment，就不可能替代主流推理引擎。
-2. Agent-aware 是差异化。系统不能要求外部 Agent app 改协议，但可以通过 metadata hints、SDK、MCP/LSP/Git adapter 获得更强的 workflow/state 优化能力。
-3. MoE expert 是系统资源。expert placement、hotness、replication、queueing、dispatch/combine、grouped GEMM 和 expert locality 必须被 scheduler 原生建模。
-4. KV 是 runtime distributed state。Phase 1 的 KV/State Runtime 只管理内存态状态：GPU HBM、peer GPU HBM、cross-node GPU HBM、CPU DRAM / pinned memory。
-5. Phase 1 不设计持久化 KVStore。自研分布式全闪 KVCache Store 是未来 Phase 2 的持久化存储层，不属于 Phase 1。
-6. 目标是 Target Pareto SOTA。不是所有单项绝对第一，而是在目标 benchmark suite 上，没有组合式 SOTA 栈能在同等硬件、模型、SLO 下全面支配本系统。
+define_workload_suite()、register_baseline_stack(name, version, config)、record_sota_claim(metric_set, evidence_uri)、reject_out_of_scope_design(reason)。
 
-## Phase 1 交付物
+## 8. 执行流程
 
-Phase 1 应交付：
+项目从 benchmark-first 文档开始：确定目标 workload，列出基线栈，实测 32×H20 拓扑，建立性能模型，再进入模块 MVP。任何跨 Phase 边界的设计必须先进入 ADR 或 Phase 2 seam 文档。
 
-- 通用 serving skeleton。
-- Distributed Execution Graph。
-- Distributed Scheduler。
-- Distributed Memory Fabric。
-- In-memory KV/State Runtime。
-- MoE-native Runtime。
-- Speculative Draft/Verify Runtime。
-- Agent Metadata Runtime。
-- GPU Kernel Runtime Strategy。
-- Benchmark / profiling / observability 基础设施。
+## 9. 性能瓶颈
 
-Phase 1 不交付：
+主要瓶颈包括 HBM 带宽、KV block 迁移字节数、跨节点同步、NCCL/RDMA latency、expert queueing、small GEMM efficiency、structured mask overhead、scheduler tick overhead 和 Agent/tool wait。任何涉及 H20 拓扑、NVLink/NVSwitch/PCIe/RDMA/GDR 的判断均不确定，需要 benchmark discovery 确认。
 
-- 持久化 KVStore。
-- NVMe SSD KV restore。
-- GDR KV storage I/O。
-- storage-backed Agent State。
-- 3FS 替代品。
-- CXL/DPU/PIM/FPGA 依赖架构。
+## 10. Benchmark / profiling 指标
 
-## 第一性原理判断
+必须映射到：TTFT、TPOT、goodput under SLO、p99 latency、GPU utilization、HBM efficiency、KV bytes moved、prefix hit rate、expert dispatch latency、expert imbalance、accepted tokens per verify、agent task completion time、GPU seconds per task、cost per task。模块级 benchmark 应记录 raw trace、配置、版本、硬件拓扑 profile 和 p50/p95/p99。
 
-一个推理系统的真实性能不由某个单点功能决定，而由以下路径共同决定：
+## 11. MVP 范围
 
-```text
-Total Cost =
-  queueing_delay
-+ prefill_cost
-+ KV_runtime_cost
-+ decode_steps × per_decode_step_cost
-+ communication_cost
-+ scheduler_overhead
-+ tool_or_agent_wait
-```
+项目 charter、Phase 1 范围、成功指标、竞品边界和硬约束清单。
 
-因此本项目必须 benchmark-first，而不是 architecture-first。
+## 12. 风险
 
-## Implementation Notes
+主要风险是范围膨胀、与成熟竞品的通用 serving 差距、未实测拓扑导致错误 parallelism、内存状态一致性复杂、优化收益只在窄 workload 成立、以及把 Phase 2 storage seam 误放入 Phase 1。
 
-- Codex 后续应先补全文档树，不写实现代码。
-- 所有模块文档都必须包含：目标、非目标、输入输出、核心数据结构、执行流程、性能瓶颈、benchmark、MVP 范围、风险。
-- 所有涉及 vLLM/SGLang/Dynamo/LMCache/Mooncake/3FS 的内容必须以竞品/参考/benchmark 出现，不得作为 backend 依赖。
+## 13. Implementation Notes
+
+- 本文件只定义 Markdown 架构、ADR、benchmark plan、模块边界和任务拆解，不包含 C++、CUDA、RDMA、scheduler、runtime 或 kernel 实现代码。
+- 对硬件拓扑、竞品性能、H20 kernel 行为和跨节点通信收益的判断，默认写成“不确定，需要 benchmark 或调研确认”。
+- Hot decode KV 必须在 GPU HBM；Phase 2 persistent KVStore 只能作为 seam；3FS 只能作为竞品组合栈组件参与对比。
+- 后续实现任务必须引用本文件的 MVP、指标和风险，并经过 `16_benchmark_plan_cn.md` 的验证设计。
+
+## 附录：既有边界摘要
+
+本次 Full Documentation Pass 保留 main 分支既有边界，并将其结构化到上方 13 个章节：
+
+- 项目不是 vLLM、SGLang、TensorRT-LLM、NVIDIA Dynamo、LMCache、Mooncake 或 3FS 的 wrapper/backend。
+- Phase 1 只做 distributed memory-native GPU inference engine，不设计 persistent KVStore、NVMe restore、GDR storage I/O、storage-backed Agent State 或 3FS 替代品。
+- Distributed Memory Fabric 是显式运行时内存层，覆盖 L0 local HBM、L1 peer HBM、L2 cross-node GPU HBM 和 L3 CPU DRAM/pinned metadata/staging。
+- 系统中心是 Distributed Execution Graph；Agent 能力是可选 metadata layer，不强迫外部 Agent app 改协议。
+- 所有拓扑、通信、kernel 和竞品性能判断都不确定，需要 benchmark discovery 或调研确认。
