@@ -4,39 +4,20 @@ Status: Accepted
 
 ## Context
 
-The project owner clarified that the distributed all-flash KVStore is NVMe SSD-based persistent storage. It is not memory, not remote memory, and not a decode hot-path memory tier.
+未来自研 distributed all-flash KVCache Store 属于 NVMe SSD-based persistent storage。它不是 memory tier，不是 Phase 1 Distributed Memory Fabric，也不是 decode 每 token 热路径。
 
 ## Decision
 
-The native distributed all-flash KVCache Store is a Phase 2 persistent storage layer. It is not part of Phase 1 runtime memory.
-
-It may later support:
-
-- KV snapshot persistence.
-- Long-context KV restore.
-- P/D KV handoff.
-- Cross-session durable reuse.
-- Failure recovery.
-- Offline prewarm.
-
-It must not be described as:
-
-- CXL-like memory.
-- Remote memory.
-- Distributed memory tier.
-- Per-token decode KV source.
+KVStore 是 Phase 2 seam，只可用于未来 KV snapshot、long-context restore、P/D handoff、cross-session durable reuse、failure recovery、offline prewarm 和 workflow replay。
 
 ## Consequences
 
-- Phase 1 focuses on GPU HBM / peer HBM / CPU DRAM runtime memory.
-- Hot decode KV must live in GPU HBM.
-- Future GDR KV interface is storage I/O optimization, not load/store memory semantics.
+Phase 1 文档只能保留 seam，不设计内部 KVStore。所有热路径调度与 attention 执行仍基于 GPU HBM 和显式通信。
 
 ## Alternatives Considered
 
-- Treat all-flash KVStore as memory tier: rejected.
-- Include KVStore in Phase 1: rejected.
+把 KVStore 命名为 L4 memory tier：否决。把 storage restore 写进 Phase 1 TPOT 模型：否决。完全不留 seam：否决，因为未来 Phase 2 需要边界。
 
 ## Implementation Notes
 
-Codex must keep KVStore content in Phase 2 seam documents only. It must not design KVStore internals or place it in Phase 1 hot path.
+若未来实现 Phase 2，必须新增 ADR、benchmark suite 和 failure/correctness 设计，且不得污染 Phase 1 hot decode path。

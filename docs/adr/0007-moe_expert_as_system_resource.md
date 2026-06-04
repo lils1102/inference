@@ -4,35 +4,20 @@ Status: Accepted
 
 ## Context
 
-Modern MoE inference is constrained by expert placement, expert dispatch, all-to-all communication, grouped GEMM efficiency, expert imbalance, and hot expert skew. Treating MoE as a local model operator is insufficient for a native distributed inference engine.
+MoE 推理受 expert placement、all-to-all dispatch/combine、expert queue、hotness skew、grouped GEMM efficiency 和跨节点通信影响。把 expert 当作局部 operator 会隐藏系统瓶颈。
 
 ## Decision
 
-Inference Fabric treats MoE experts as first-class distributed system resources.
-
-The scheduler must eventually reason about:
-
-- expert_id / layer_id / model_id
-- node_id / gpu_id
-- expert hotness
-- queue depth
-- replica count
-- expected service time
-- communication cost
-- HBM residency
-- routing locality
+Inference Fabric 把 MoE expert 建模为系统级资源。Scheduler 必须能读取 expert_id、layer_id、placement、replica、queue depth、expected service time、communication cost、HBM residency 和 routing locality。
 
 ## Consequences
 
-- Expert placement becomes part of the global scheduler.
-- Expert locality can be jointly optimized with KV locality and topology.
-- MoE runtime becomes a core differentiator instead of an implementation detail.
+MoE runtime 成为核心模块，expert locality 可以与 KV locality、topology 和 SLO 联合优化。
 
 ## Alternatives Considered
 
-- Treat expert parallelism as a backend config only: rejected because it does not expose enough control for Agent/MoE/native distributed scheduling.
-- Rely only on generic all-to-all collectives: rejected because expert-aware dispatch, batching, and replication require semantic scheduling.
+仅依赖框架默认 MoE kernel：不足。静态 expert placement 永久不变：不足。把所有 expert 跨节点均匀摊开且不 benchmark：风险过高。
 
 ## Implementation Notes
 
-Codex should design an `ExpertPlacementTable` and MoE Runtime document. It should compare vLLM/SGLang expert parallel capabilities but must frame our advantage as system-level expert scheduling, not merely EP support.
+默认并行策略参考 ADR-0009；expert dispatch latency、expert imbalance 和 GPU seconds/task 是必测指标。
