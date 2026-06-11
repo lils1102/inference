@@ -4,38 +4,20 @@ Status: Accepted
 
 ## Context
 
-Earlier designs used the term Active KV. Without CXL, DPU, SmartNIC offload, or Phase-1 KVStore, this term can be misunderstood as storage-side or memory-fabric-side computation.
+“Active KV”容易被误解为存储层、特殊内存硬件或 offload 设备参与计算。Phase 1 没有 CXL、DPU、SmartNIC offload、PIM、FPGA，也没有 KVStore 内部设计。
 
 ## Decision
 
-Active KV is defined as an execution mode:
-
-```text
-KV-owner-side attention execution
-```
-
-If a GPU group owns hot KV, the scheduler may send query/hidden state to that GPU group and execute shared-prefix or remote-prefix attention there, instead of moving the entire KV block to the requesting GPU.
-
-This is a scheduler option, not a mandatory path.
+Phase 1 中更准确的名称是 KV-owner-side attention execution 或 KV-resident attention execution mode。执行者是持有 hot KV 的 GPU group。Scheduler 可在 local attention、KV migration then local attention、KV-owner-side attention、remote-prefix + local-suffix attention、prefix recomputation 之间选择。
 
 ## Consequences
 
-Scheduler can choose among:
-
-- local attention
-- migrate KV then local attention
-- KV-owner-side attention
-- prefix recomputation
-- keep current placement
-
-The executor for Active KV is a GPU group that owns hot KV, not a KVStore, DPU, CXL memory node, or storage device.
+Active KV 只是 execution mode，不是存储层，不是 mandatory path。它适用于 shared-prefix/high-prefix-reuse 场景，但收益不确定，需要 benchmark 确认。
 
 ## Alternatives Considered
 
-- Treat Active KV as storage-side compute: rejected.
-- Treat Active KV as mandatory for all remote KV hits: rejected.
-- Ignore remote-prefix execution: rejected because high-prefix-reuse and shared-prefix workloads may benefit.
+把 Active KV 解释为存储层能力：否决。把它作为所有 remote KV hit 的固定路径：否决。完全删除 owner-side attention：否决，因为 shared-prefix 场景可能有收益。
 
 ## Implementation Notes
 
-Codex should prefer the precise term `KV-owner-side attention execution` in Phase 1 docs, and may mention `Active KV` as a shorthand. It must not describe KVStore or NVMe SSD as computing attention.
+文档应优先使用 KV-owner-side attention execution。不得把持久化存储、外部存储组件或 offload 设备写成 attention 执行者。

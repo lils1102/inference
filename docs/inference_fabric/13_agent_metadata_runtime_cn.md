@@ -1,12 +1,12 @@
-# 02. First-principles Performance Model
+# 13. Agent Metadata Runtime
 
 ## 1. 本文件结论
 
-所有设计都必须映射到端到端成本模型：queueing、prefill、runtime KV/state、decode steps、communication、scheduler overhead 和 tool/agent wait。任何性能主张都需要 benchmark，而不是静态架构判断。
+Agent-aware 能力是可选 metadata layer，不是强制 Agent protocol。Level 0 支持普通 OpenAI API；Level 1 支持 session_id、task_id、repo_id、branch_id、tool_schema_id 等 hints；Level 2 是未来 SDK / MCP / LSP / Git adapter seam。
 
 ## 2. 模块目标
 
-建立 TTFT、TPOT、MoE、Distributed Memory Fabric、Speculative Runtime 和 Agent task cost 的统一模型，作为 scheduler、kernel 和 benchmark plan 的输入。
+利用 workflow metadata 改善 prefix reuse、KV pinning、task-level scheduling、branch state reuse、tool schema reuse 和 cost per task，同时不破坏通用 serving。
 
 ## 3. 非目标
 
@@ -20,19 +20,19 @@
 
 ## 5. 核心设计
 
-把 request 级指标扩展为 task 级指标。通用 serving 关注 TTFT/TPOT/goodput/p99；MoE 关注 expert dispatch latency、imbalance 和 grouped GEMM efficiency；KV runtime 关注 KV bytes moved、prefix hit rate、HBM pressure；speculative 关注 accepted tokens per verify；Agent 关注 task completion time、GPU seconds/task 和 cost/task。
+Agent Metadata Runtime 不执行外部工具、不管理业务状态持久化、不要求 app 改协议。它只把可选 metadata 转成 AgentContext，提供给 scheduler、KV runtime、structured generation 和 observability。storage-backed Agent State 属于 Phase 2 seam 之后的其他系统，不进入 Phase 1。
 
 ## 6. 数据结构草案
 
-CostTerm(name, unit, estimator, observed_value)；RequestTrace(queue_ms, prefill_ms, decode_ms, comm_ms, kv_bytes, accepted_tokens)；AgentTaskTrace(task_id, model_calls, tool_wait_ms, gpu_seconds, cost)。
+AgentContext(session_id, task_id, repo_id, branch_id, tool_schema_id, workflow_step, priority)；StateLineage(parent_task, branch, reused_prefixes)；TaskCostTrace(task_id, model_calls, gpu_seconds, wall_ms, cost)。
 
 ## 7. 关键 API 草案
 
-estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_layer_cost(route)、estimate_speculative_gain(draft, verify)、record_trace(trace)。
+extract_agent_context(request_metadata)、attach_context(request_id, context)、lookup_task_state(context)、record_tool_boundary(event)、report_task_cost(task_id)。
 
 ## 8. 执行流程
 
-每个调度周期先读取队列、KV placement、expert queues、HBM pressure 和 draft/verify 状态，再估计候选 execution plan 成本，执行后把 trace 回灌到 benchmark/profiling 数据集。
+普通请求无 metadata 时按 Level 0 处理；有 hints 时建立 AgentContext，scheduler 用它提升 prefix hit、pin 热 KV、避免跨任务抢占；structured generation 用 tool_schema_id 复用 mask/cache；observability 聚合 task-level 指标。
 
 ## 9. 性能瓶颈
 
@@ -44,7 +44,7 @@ estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_
 
 ## 11. MVP 范围
 
-离线 cost model 表、运行时 trace schema、最小 scheduler estimator 和 benchmark 报表。
+Level 0/1 metadata parser、session/task/repo/branch/tool_schema hints、task-level metrics、prefix pin policy 和 Level 2 seam 文档。
 
 ## 12. 风险
 
@@ -56,13 +56,3 @@ estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_
 - 对硬件拓扑、竞品性能、H20 kernel 行为和跨节点通信收益的判断，默认写成“不确定，需要 benchmark 或调研确认”。
 - Hot decode KV 必须在 GPU HBM；Phase 2 persistent KVStore 只能作为 seam；3FS 只能作为竞品组合栈组件参与对比。
 - 后续实现任务必须引用本文件的 MVP、指标和风险，并经过 `16_benchmark_plan_cn.md` 的验证设计。
-
-## 附录：既有边界摘要
-
-本次 Full Documentation Pass 保留 main 分支既有边界，并将其结构化到上方 13 个章节：
-
-- 项目不是 vLLM、SGLang、TensorRT-LLM、NVIDIA Dynamo、LMCache、Mooncake 或 3FS 的 wrapper/backend。
-- Phase 1 只做 distributed memory-native GPU inference engine，不设计 persistent KVStore、NVMe restore、GDR storage I/O、storage-backed Agent State 或 3FS 替代品。
-- Distributed Memory Fabric 是显式运行时内存层，覆盖 L0 local HBM、L1 peer HBM、L2 cross-node GPU HBM 和 L3 CPU DRAM/pinned metadata/staging。
-- 系统中心是 Distributed Execution Graph；Agent 能力是可选 metadata layer，不强迫外部 Agent app 改协议。
-- 所有拓扑、通信、kernel 和竞品性能判断都不确定，需要 benchmark discovery 或调研确认。

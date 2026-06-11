@@ -1,35 +1,23 @@
-# ADR-0009: Intra-node TP, Cross-node EP as Default
+# ADR-0009: Intra-node TP and Cross-node EP as Default
 
 Status: Proposed
 
 ## Context
 
-The primary hardware target is 4 nodes × 8 H20 GPUs. Exact NVLink/NVSwitch/PCIe/RDMA topology is unknown and must be discovered by benchmark. In distributed inference, tensor parallelism across nodes can introduce high-frequency collective communication, while expert parallelism and data/prefill-decode placement often tolerate cross-node boundaries better.
+目标硬件为 4 nodes × 8 × H20 GPUs，但 NVLink/NVSwitch/PCIe/RDMA/GDR 拓扑不确定，需要 benchmark discovery 确认。跨节点 TP 可能带来高频 collective，同节点 TP 通常更容易控制延迟，但不能静态假设。
 
 ## Decision
 
-The default Phase 1 planning assumption is:
-
-```text
-Intra-node Tensor Parallelism
-Cross-node Expert Parallelism / Data Parallelism / Prefill-Decode placement / KV-state sharding
-```
-
-This is a default planning assumption, not a hard rule. Benchmark discovery may override it.
+默认 planning assumption 是 intra-node Tensor Parallelism；cross-node 使用 Expert Parallelism / Data Parallelism / Prefill-Decode split / state sharding。跨节点 TP 不禁止，但只有 benchmark 证明某模型、硬件拓扑、workload 下有利时才启用。
 
 ## Consequences
 
-- The scheduler and model runtime should first optimize for intra-node GPU groups.
-- Cross-node communication should be minimized on latency-sensitive per-layer dense collectives.
-- MoE expert placement, P/D placement, and KV/state locality become primary cross-node scheduling levers.
-- NCCL allreduce/alltoall, RDMA, GPUDirect RDMA, and GPU P2P topology must be benchmarked before finalizing parallelism plans.
+Scheduler 和 model runtime 先围绕 node-local GPU group 设计，同时保留 cross-node TP、PP、DP、P/D disaggregation 的实验入口。
 
 ## Alternatives Considered
 
-- Cross-node TP by default: rejected as a default due to high synchronization risk.
-- Single-node-only design: rejected because the project targets native multi-node serving.
-- Static TP/EP configuration only: rejected because the system should evolve toward topology-aware planning.
+cross-node TP by default：风险高。single-node-only：不满足目标。固定 parallelism 不 benchmark：否决。
 
 ## Implementation Notes
 
-Codex should document this as a benchmark-driven default, not as an absolute rule. The benchmark plan must include NCCL allreduce, alltoall, P2P bandwidth, RDMA/GDR checks, and model-specific TP/EP experiments.
+Benchmark 必须比较 intra-node TP + cross-node EP、cross-node TP、cross-node PP、cross-node DP、P/D disaggregation，并记录 NCCL allreduce/alltoall、RDMA/GDR、P2P、HBM 和 p99。

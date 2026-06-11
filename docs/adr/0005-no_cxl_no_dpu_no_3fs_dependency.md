@@ -4,39 +4,20 @@ Status: Accepted
 
 ## Context
 
-Inference Fabric targets commodity GPU cluster infrastructure: GPUs, CPU hosts, RDMA/NCCL/GDR/P2P communication, and CPU DRAM / pinned memory. The project should not depend on specialized memory fabric or offload hardware that is unavailable in the target environment.
-
-3FS appears in the industry composable stack as a competitor component, but it is not an internal dependency of this project.
+目标环境是 GPU、CPU host、NCCL/RDMA/GDR/P2P、CPU DRAM/pinned memory 的通用集群。CXL、DPU/SmartNIC offload、PIM、FPGA 不是 Phase 1 依赖。3FS 是竞品组合栈组件，不是内部依赖。
 
 ## Decision
 
-Phase 1 explicitly excludes:
-
-```text
-CXL
-DPU / SmartNIC offload
-PIM
-FPGA
-3FS dependency
-```
-
-Cross-node state access must use explicit communication, not transparent remote memory.
-
-RDMA/GDR/NCCL are data movement paths, not intelligent execution substrates.
+Phase 1 明确 No CXL、No DPU / SmartNIC offload、No PIM、No FPGA、No 3FS dependency。跨节点状态访问必须显式建模和 benchmark。
 
 ## Consequences
 
-- Scheduler must model data movement explicitly.
-- KV movement, expert dispatch, activation dispatch, and peer transfer must all have explicit cost models.
-- Active KV is implemented as KV-owner-side GPU execution, not as DPU/CXL/storage-side compute.
-- 3FS only appears in competitor analysis.
+Scheduler 必须对 KV movement、activation dispatch、expert dispatch、communication latency 和 HBM pressure 建 cost model，不能依赖不可用硬件或外部存储系统。
 
 ## Alternatives Considered
 
-- CXL-like memory model: rejected because it is not supported by current target hardware.
-- DPU / SmartNIC offload: rejected because the project does not target DPU execution.
-- 3FS as internal storage layer: rejected because the project does not use 3FS.
+依赖 3FS 做内部存储：否决。依赖 DPU/CXL 做远端状态：否决。把 RDMA/GDR 视为智能计算层：否决。
 
 ## Implementation Notes
 
-Codex must not introduce CXL/DPU/3FS assumptions into Phase 1 architecture. If mentioned, they must appear only as out-of-scope or competitor comparison items.
+3FS 只能在 competitor stack analysis 和 benchmark plan 中出现，例如 Dynamo + vLLM/SGLang + LMCache + Mooncake + 3FS。

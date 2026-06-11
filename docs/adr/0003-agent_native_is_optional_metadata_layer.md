@@ -4,31 +4,20 @@ Status: Accepted
 
 ## Context
 
-Inference Fabric must support Agent / workflow workloads, but external Agent applications are developed by users and third parties. The inference engine cannot require all Agent apps to adopt a proprietary protocol before they can use the system.
+Agent / workflow 是目标 workload，但外部 Agent app 不会统一迁移到私有协议。推理引擎不能要求用户先改 Agent 框架才能获得普通 serving。
 
 ## Decision
 
-Agent-aware capability is implemented as an optional metadata and workflow-state enhancement layer, not as a mandatory Agent application protocol.
-
-The system supports three levels:
-
-```text
-Level 0: Zero-intrusion OpenAI-compatible request.
-Level 1: Optional metadata hints such as session_id, task_id, workspace_id, repo_id, branch_id, tool_schema_id.
-Level 2: Future SDK / MCP / LSP / Git adapter seam for deeper workflow-state visibility.
-```
+Agent-aware 能力实现为可选 metadata layer。Level 0 是普通 OpenAI API；Level 1 是 session_id、task_id、repo_id、branch_id、tool_schema_id 等 hints；Level 2 是未来 SDK / MCP / LSP / Git adapter seam。
 
 ## Consequences
 
-- Ordinary serving remains first-class.
-- Agent workloads can benefit progressively as more metadata is provided.
-- The system avoids being locked into a single Agent framework.
+系统可逐步利用 metadata 提升 prefix reuse、KV pinning、structured mask reuse 和 task-level scheduling，同时保持普通客户端无侵入。
 
 ## Alternatives Considered
 
-- Mandatory Agent protocol: rejected because it blocks adoption.
-- No Agent awareness: rejected because it loses the core differentiation.
+强制 Agent protocol：阻碍采用。完全无 Agent awareness：放弃差异化。把 Agent state 持久化放入 Phase 1：越界。
 
 ## Implementation Notes
 
-Codex should document Agent Metadata Runtime separately from API compatibility and general serving. Agent Runtime must not be described as controlling the external Agent app.
+Phase 1 只记录内存态 metadata 和 task-level metrics；storage-backed Agent State 不进入 Phase 1。

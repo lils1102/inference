@@ -1,12 +1,12 @@
-# 02. First-principles Performance Model
+# 04. Hardware Topology：32×H20 Benchmark Discovery
 
 ## 1. 本文件结论
 
-所有设计都必须映射到端到端成本模型：queueing、prefill、runtime KV/state、decode steps、communication、scheduler overhead 和 tool/agent wait。任何性能主张都需要 benchmark，而不是静态架构判断。
+Primary hardware target 是 4 nodes × 8 × H20 GPUs × 96GB HBM，合计约 32 GPUs / 3TB HBM。NVLink、NVSwitch、PCIe、NUMA、RDMA、GPUDirect RDMA、P2P 和实际带宽/延迟全部不确定，需要 benchmark discovery 确认。
 
 ## 2. 模块目标
 
-建立 TTFT、TPOT、MoE、Distributed Memory Fabric、Speculative Runtime 和 Agent task cost 的统一模型，作为 scheduler、kernel 和 benchmark plan 的输入。
+定义 H20 集群拓扑发现流程，避免 scheduler、parallelism、KV migration 和 MoE dispatch 依赖未实测假设。
 
 ## 3. 非目标
 
@@ -20,19 +20,19 @@
 
 ## 5. 核心设计
 
-把 request 级指标扩展为 task 级指标。通用 serving 关注 TTFT/TPOT/goodput/p99；MoE 关注 expert dispatch latency、imbalance 和 grouped GEMM efficiency；KV runtime 关注 KV bytes moved、prefix hit rate、HBM pressure；speculative 关注 accepted tokens per verify；Agent 关注 task completion time、GPU seconds/task 和 cost/task。
+拓扑发现分为静态枚举和动态 microbenchmark。静态枚举包含 nvidia-smi topo -m、GPU/NUMA/NIC 绑定、驱动/CUDA/NCCL/OFED/UCX 版本；动态 benchmark 包含 HBM bandwidth、GPU memcpy、same-node P2P、PCIe、NCCL allreduce/alltoall、RDMA/GDR capability、多节点 latency。所有结果进入 TopologyProfile，scheduler 只消费 profile，不硬编码拓扑。
 
 ## 6. 数据结构草案
 
-CostTerm(name, unit, estimator, observed_value)；RequestTrace(queue_ms, prefill_ms, decode_ms, comm_ms, kv_bytes, accepted_tokens)；AgentTaskTrace(task_id, model_calls, tool_wait_ms, gpu_seconds, cost)。
+TopologyProfile(nodes, gpus, nics, numa, links, measured_bw, measured_latency, gdr_capability)；LinkMetric(src, dst, transport, bw_GBps, latency_us, p99_us, confidence)；GpuGroup(id, gpu_ids, local_rank, tp_candidate, ep_candidate)。
 
 ## 7. 关键 API 草案
 
-estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_layer_cost(route)、estimate_speculative_gain(draft, verify)、record_trace(trace)。
+discover_static_topology()、run_nccl_bench(op, group)、run_p2p_bench(pair)、run_rdma_probe(pair)、publish_topology_profile(profile)。
 
 ## 8. 执行流程
 
-每个调度周期先读取队列、KV placement、expert queues、HBM pressure 和 draft/verify 状态，再估计候选 execution plan 成本，执行后把 trace 回灌到 benchmark/profiling 数据集。
+启动前跑 discovery，生成 profile；scheduler 读取 profile 生成 intra-node TP group、cross-node EP/DP/P-D candidates；上线后周期性抽样验证带宽和延迟漂移。任何硬件相关判断都写成“不确定，需要 benchmark discovery 确认”，直到 profile 有数据。
 
 ## 9. 性能瓶颈
 
@@ -44,7 +44,7 @@ estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_
 
 ## 11. MVP 范围
 
-离线 cost model 表、运行时 trace schema、最小 scheduler estimator 和 benchmark 报表。
+一键生成 topology report、NCCL/P2P/RDMA/HBM benchmark 表和 scheduler 可读 JSON/YAML profile。
 
 ## 12. 风险
 
@@ -56,13 +56,3 @@ estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_
 - 对硬件拓扑、竞品性能、H20 kernel 行为和跨节点通信收益的判断，默认写成“不确定，需要 benchmark 或调研确认”。
 - Hot decode KV 必须在 GPU HBM；Phase 2 persistent KVStore 只能作为 seam；3FS 只能作为竞品组合栈组件参与对比。
 - 后续实现任务必须引用本文件的 MVP、指标和风险，并经过 `16_benchmark_plan_cn.md` 的验证设计。
-
-## 附录：既有边界摘要
-
-本次 Full Documentation Pass 保留 main 分支既有边界，并将其结构化到上方 13 个章节：
-
-- 项目不是 vLLM、SGLang、TensorRT-LLM、NVIDIA Dynamo、LMCache、Mooncake 或 3FS 的 wrapper/backend。
-- Phase 1 只做 distributed memory-native GPU inference engine，不设计 persistent KVStore、NVMe restore、GDR storage I/O、storage-backed Agent State 或 3FS 替代品。
-- Distributed Memory Fabric 是显式运行时内存层，覆盖 L0 local HBM、L1 peer HBM、L2 cross-node GPU HBM 和 L3 CPU DRAM/pinned metadata/staging。
-- 系统中心是 Distributed Execution Graph；Agent 能力是可选 metadata layer，不强迫外部 Agent app 改协议。
-- 所有拓扑、通信、kernel 和竞品性能判断都不确定，需要 benchmark discovery 或调研确认。

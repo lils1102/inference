@@ -1,12 +1,12 @@
-# 02. First-principles Performance Model
+# 20. Module Task Breakdown for Codex
 
 ## 1. 本文件结论
 
-所有设计都必须映射到端到端成本模型：queueing、prefill、runtime KV/state、decode steps、communication、scheduler overhead 和 tool/agent wait。任何性能主张都需要 benchmark，而不是静态架构判断。
+后续 Codex 任务必须从文档、ADR、benchmark plan 和产品化规格派生。当前开发口径已经升级为一次性交付完整产品；具体工程 backlog 以 `30_engineering_execution_backlog_cn.md` 为准。
 
 ## 2. 模块目标
 
-建立 TTFT、TPOT、MoE、Distributed Memory Fabric、Speculative Runtime 和 Agent task cost 的统一模型，作为 scheduler、kernel 和 benchmark plan 的输入。
+把完整产品拆成可派发的设计、实现、benchmark、测试、部署和发布任务，保持模块边界、接口契约、验收标准清晰。
 
 ## 3. 非目标
 
@@ -20,19 +20,19 @@
 
 ## 5. 核心设计
 
-把 request 级指标扩展为 task 级指标。通用 serving 关注 TTFT/TPOT/goodput/p99；MoE 关注 expert dispatch latency、imbalance 和 grouped GEMM efficiency；KV runtime 关注 KV bytes moved、prefix hit rate、HBM pressure；speculative 关注 accepted tokens per verify；Agent 关注 task completion time、GPU seconds/task 和 cost/task。
+任务按 Contract -> Runtime Skeleton -> Distributed Runtime -> Optimization -> Product Hardening -> Release Candidate 分层。每个任务必须包含输入文档、禁止项、验收指标、baseline、rollback。Persistent KV/state storage 现在属于产品化首版范围，但不得进入 per-token decode hot path。
 
 ## 6. 数据结构草案
 
-CostTerm(name, unit, estimator, observed_value)；RequestTrace(queue_ms, prefill_ms, decode_ms, comm_ms, kv_bytes, accepted_tokens)；AgentTaskTrace(task_id, model_calls, tool_wait_ms, gpu_seconds, cost)。
+CodexTask(id, module, phase, inputs, outputs, metrics, forbidden_scope, reviewer)；Milestone(name, tasks, exit_criteria)；ImplementationTicket(module, mvp, benchmark, risks)。
 
 ## 7. 关键 API 草案
 
-estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_layer_cost(route)、estimate_speculative_gain(draft, verify)、record_trace(trace)。
+derive_tasks_from_doc(module)、validate_task_scope(task)、attach_benchmark(task, suite)、mark_phase2_seam(task)。
 
 ## 8. 执行流程
 
-每个调度周期先读取队列、KV placement、expert queues、HBM pressure 和 draft/verify 状态，再估计候选 execution plan 成本，执行后把 trace 回灌到 benchmark/profiling 数据集。
+先完成 benchmark discovery 和 baseline truth layer，再做 execution graph/serving skeleton，再接 memory/KV/MoE/scheduler/speculative/Agent/structured/kernel。每个 optimization 先写 RFC 和 benchmark，不直接默认实现。
 
 ## 9. 性能瓶颈
 
@@ -44,7 +44,7 @@ estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_
 
 ## 11. MVP 范围
 
-离线 cost model 表、运行时 trace schema、最小 scheduler estimator 和 benchmark 报表。
+任务清单、模块依赖图、阶段门、禁止项检查表和后续 PR 切分建议。
 
 ## 12. 风险
 
@@ -56,13 +56,3 @@ estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_
 - 对硬件拓扑、竞品性能、H20 kernel 行为和跨节点通信收益的判断，默认写成“不确定，需要 benchmark 或调研确认”。
 - Hot decode KV 必须在 GPU HBM；Phase 2 persistent KVStore 只能作为 seam；3FS 只能作为竞品组合栈组件参与对比。
 - 后续实现任务必须引用本文件的 MVP、指标和风险，并经过 `16_benchmark_plan_cn.md` 的验证设计。
-
-## 附录：既有边界摘要
-
-本次 Full Documentation Pass 保留 main 分支既有边界，并将其结构化到上方 13 个章节：
-
-- 项目不是 vLLM、SGLang、TensorRT-LLM、NVIDIA Dynamo、LMCache、Mooncake 或 3FS 的 wrapper/backend。
-- Phase 1 只做 distributed memory-native GPU inference engine，不设计 persistent KVStore、NVMe restore、GDR storage I/O、storage-backed Agent State 或 3FS 替代品。
-- Distributed Memory Fabric 是显式运行时内存层，覆盖 L0 local HBM、L1 peer HBM、L2 cross-node GPU HBM 和 L3 CPU DRAM/pinned metadata/staging。
-- 系统中心是 Distributed Execution Graph；Agent 能力是可选 metadata layer，不强迫外部 Agent app 改协议。
-- 所有拓扑、通信、kernel 和竞品性能判断都不确定，需要 benchmark discovery 或调研确认。

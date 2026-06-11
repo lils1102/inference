@@ -1,12 +1,12 @@
-# 02. First-principles Performance Model
+# 10. MoE-native Runtime
 
 ## 1. 本文件结论
 
-所有设计都必须映射到端到端成本模型：queueing、prefill、runtime KV/state、decode steps、communication、scheduler overhead 和 tool/agent wait。任何性能主张都需要 benchmark，而不是静态架构判断。
+MoE expert 是系统级资源，不是普通 FFN kernel 细节。Phase 1 必须把 expert placement、queueing、hotness、replication、dispatch/combine、grouped GEMM 和 expert imbalance 纳入 scheduler 与 benchmark。
 
 ## 2. 模块目标
 
-建立 TTFT、TPOT、MoE、Distributed Memory Fabric、Speculative Runtime 和 Agent task cost 的统一模型，作为 scheduler、kernel 和 benchmark plan 的输入。
+降低 MoE serving 中的 expert dispatch latency、all-to-all overhead、small GEMM inefficiency、hot expert p99 queueing 和跨节点通信放大。
 
 ## 3. 非目标
 
@@ -20,19 +20,19 @@
 
 ## 5. 核心设计
 
-把 request 级指标扩展为 task 级指标。通用 serving 关注 TTFT/TPOT/goodput/p99；MoE 关注 expert dispatch latency、imbalance 和 grouped GEMM efficiency；KV runtime 关注 KV bytes moved、prefix hit rate、HBM pressure；speculative 关注 accepted tokens per verify；Agent 关注 task completion time、GPU seconds/task 和 cost/task。
+MoE runtime 分离 Router、ExpertPlacementTable、DispatchPlanner、ExpertQueue、GroupedGemmBatcher 和 CombinePlanner。默认倾向 intra-node TP 与 cross-node EP/DP/P-D/state sharding，但所有 parallelism 策略都必须由 benchmark discovery 和模型 workload 确认。
 
 ## 6. 数据结构草案
 
-CostTerm(name, unit, estimator, observed_value)；RequestTrace(queue_ms, prefill_ms, decode_ms, comm_ms, kv_bytes, accepted_tokens)；AgentTaskTrace(task_id, model_calls, tool_wait_ms, gpu_seconds, cost)。
+ExpertPlacement(model, layer, expert_id, replicas, gpu_group, load)；ExpertRoute(token_batch, topk_experts, scores)；ExpertQueue(expert_id, depth, p50_ms, p99_ms)；DispatchBatch(src, dst_expert, tokens, bytes, priority)。
 
 ## 7. 关键 API 草案
 
-estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_layer_cost(route)、estimate_speculative_gain(draft, verify)、record_trace(trace)。
+route_tokens(hidden_states)、plan_dispatch(routes, topology)、enqueue_expert(batch)、run_grouped_gemm(expert_batches)、combine_outputs(dispatch_id)、update_expert_hotness(stats)。
 
 ## 8. 执行流程
 
-每个调度周期先读取队列、KV placement、expert queues、HBM pressure 和 draft/verify 状态，再估计候选 execution plan 成本，执行后把 trace 回灌到 benchmark/profiling 数据集。
+每个 MoE layer 先 router top-k，再按 ExpertPlacementTable 聚合 tokens，dispatch 到 expert owners，expert queue 合批执行 grouped GEMM，combine 返回 hidden states。scheduler 根据 hotness 和 imbalance 调整 placement/replication 候选。
 
 ## 9. 性能瓶颈
 
@@ -44,7 +44,7 @@ estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_
 
 ## 11. MVP 范围
 
-离线 cost model 表、运行时 trace schema、最小 scheduler estimator 和 benchmark 报表。
+静态 expert placement、basic all-to-all dispatch/combine、expert queue metrics、grouped GEMM baseline、hot expert profiling 和 cross-request coalescing 设计。
 
 ## 12. 风险
 
@@ -56,13 +56,3 @@ estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_
 - 对硬件拓扑、竞品性能、H20 kernel 行为和跨节点通信收益的判断，默认写成“不确定，需要 benchmark 或调研确认”。
 - Hot decode KV 必须在 GPU HBM；Phase 2 persistent KVStore 只能作为 seam；3FS 只能作为竞品组合栈组件参与对比。
 - 后续实现任务必须引用本文件的 MVP、指标和风险，并经过 `16_benchmark_plan_cn.md` 的验证设计。
-
-## 附录：既有边界摘要
-
-本次 Full Documentation Pass 保留 main 分支既有边界，并将其结构化到上方 13 个章节：
-
-- 项目不是 vLLM、SGLang、TensorRT-LLM、NVIDIA Dynamo、LMCache、Mooncake 或 3FS 的 wrapper/backend。
-- Phase 1 只做 distributed memory-native GPU inference engine，不设计 persistent KVStore、NVMe restore、GDR storage I/O、storage-backed Agent State 或 3FS 替代品。
-- Distributed Memory Fabric 是显式运行时内存层，覆盖 L0 local HBM、L1 peer HBM、L2 cross-node GPU HBM 和 L3 CPU DRAM/pinned metadata/staging。
-- 系统中心是 Distributed Execution Graph；Agent 能力是可选 metadata layer，不强迫外部 Agent app 改协议。
-- 所有拓扑、通信、kernel 和竞品性能判断都不确定，需要 benchmark discovery 或调研确认。

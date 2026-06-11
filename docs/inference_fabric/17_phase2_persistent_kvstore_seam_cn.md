@@ -1,18 +1,21 @@
-# 02. First-principles Performance Model
+# 17. Phase 2 Persistent KVStore Seam
+
+> Productization update: 当前产品化首版已经把 persistent KV/state storage 纳入完整产品范围。本文保留“storage 不得进入每 token decode hot path”的风险边界；具体产品实现契约以 `26_memory_kv_state_storage_spec_cn.md` 为准。
 
 ## 1. 本文件结论
 
-所有设计都必须映射到端到端成本模型：queueing、prefill、runtime KV/state、decode steps、communication、scheduler overhead 和 tool/agent wait。任何性能主张都需要 benchmark，而不是静态架构判断。
+Persistent all-flash KVCache Store 只属于 Phase 2 seam。它是未来基于 NVMe SSD 的持久化存储层，不是 Phase 1 内存层，不在 decode hot path，不作为 KV-owner-side attention 执行者。
 
 ## 2. 模块目标
 
-建立 TTFT、TPOT、MoE、Distributed Memory Fabric、Speculative Runtime 和 Agent task cost 的统一模型，作为 scheduler、kernel 和 benchmark plan 的输入。
+定义 Phase 1 与未来 persistent KVStore 的接口边界，只保留 seam，不做内部存储设计。
 
 ## 3. 非目标
 
 - 不把 vLLM、SGLang、TensorRT-LLM、NVIDIA Dynamo、LMCache、Mooncake、3FS 作为 execution backend。
 - Phase 1 不设计持久化 KVStore、NVMe SSD KV restore、GDR KV storage I/O、storage-backed Agent State 或 3FS 替代品。
 - 不依赖 CXL、DPU / SmartNIC offload、PIM、FPGA；不把 storage 放入 decode hot path。
+- 不在 Phase 1 内部设计 NVMe layout、flash index、failure recovery 或 storage-backed Agent State。
 
 ## 4. 第一性原理瓶颈
 
@@ -20,19 +23,19 @@
 
 ## 5. 核心设计
 
-把 request 级指标扩展为 task 级指标。通用 serving 关注 TTFT/TPOT/goodput/p99；MoE 关注 expert dispatch latency、imbalance 和 grouped GEMM efficiency；KV runtime 关注 KV bytes moved、prefix hit rate、HBM pressure；speculative 关注 accepted tokens per verify；Agent 关注 task completion time、GPU seconds/task 和 cost/task。
+Phase 1 只允许定义 SnapshotExport、SnapshotImport、PrewarmHint、DurableStateRef 等抽象边界。不得设计全闪索引、NVMe layout、GDR storage I/O、failure recovery 协议或 storage-backed Agent State。未来 Phase 2 可用于 KV snapshot、long-context restore、P/D handoff、cross-session durable reuse、failure recovery、offline prewarm、workflow replay。
 
 ## 6. 数据结构草案
 
-CostTerm(name, unit, estimator, observed_value)；RequestTrace(queue_ms, prefill_ms, decode_ms, comm_ms, kv_bytes, accepted_tokens)；AgentTaskTrace(task_id, model_calls, tool_wait_ms, gpu_seconds, cost)。
+DurableStateRef(id, model, token_span, metadata, created_at)；SnapshotManifest(block_refs, dtype, layout, checksum)；PrewarmHint(state_ref, target_gpu_group, deadline)。这些是 seam 级描述，不代表 Phase 1 实现。
 
 ## 7. 关键 API 草案
 
-estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_layer_cost(route)、estimate_speculative_gain(draft, verify)、record_trace(trace)。
+export_snapshot_seam(state_ref)、import_snapshot_seam(durable_ref)、request_prewarm_seam(hint)、report_restore_cost_seam(metrics)。Phase 1 只能 stub 或文档化这些接口。
 
 ## 8. 执行流程
 
-每个调度周期先读取队列、KV placement、expert queues、HBM pressure 和 draft/verify 状态，再估计候选 execution plan 成本，执行后把 trace 回灌到 benchmark/profiling 数据集。
+Phase 1 runtime 可以在结束时产生“可导出状态”的 metadata，但不落盘、不恢复、不在热路径读取。Phase 2 若实现，必须先通过新的 ADR 和 benchmark plan，证明不会污染 hot decode path。
 
 ## 9. 性能瓶颈
 
@@ -44,7 +47,7 @@ estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_
 
 ## 11. MVP 范围
 
-离线 cost model 表、运行时 trace schema、最小 scheduler estimator 和 benchmark 报表。
+接口 seam、禁止项、未来用例、需要新增 ADR 的条件和 benchmark 验收要求。
 
 ## 12. 风险
 
@@ -56,13 +59,3 @@ estimate_request_cost(profile)、estimate_kv_action_cost(action)、estimate_moe_
 - 对硬件拓扑、竞品性能、H20 kernel 行为和跨节点通信收益的判断，默认写成“不确定，需要 benchmark 或调研确认”。
 - Hot decode KV 必须在 GPU HBM；Phase 2 persistent KVStore 只能作为 seam；3FS 只能作为竞品组合栈组件参与对比。
 - 后续实现任务必须引用本文件的 MVP、指标和风险，并经过 `16_benchmark_plan_cn.md` 的验证设计。
-
-## 附录：既有边界摘要
-
-本次 Full Documentation Pass 保留 main 分支既有边界，并将其结构化到上方 13 个章节：
-
-- 项目不是 vLLM、SGLang、TensorRT-LLM、NVIDIA Dynamo、LMCache、Mooncake 或 3FS 的 wrapper/backend。
-- Phase 1 只做 distributed memory-native GPU inference engine，不设计 persistent KVStore、NVMe restore、GDR storage I/O、storage-backed Agent State 或 3FS 替代品。
-- Distributed Memory Fabric 是显式运行时内存层，覆盖 L0 local HBM、L1 peer HBM、L2 cross-node GPU HBM 和 L3 CPU DRAM/pinned metadata/staging。
-- 系统中心是 Distributed Execution Graph；Agent 能力是可选 metadata layer，不强迫外部 Agent app 改协议。
-- 所有拓扑、通信、kernel 和竞品性能判断都不确定，需要 benchmark discovery 或调研确认。
