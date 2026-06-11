@@ -1,5 +1,7 @@
 # 01. Phase 1 Scope：Distributed Memory Only
 
+> Productization update: 本文件描述的是早期范围控制。当前要求是不区分阶段、一次开发完整产品化系统；开发任务以 `21_productization_full_scope_cn.md` 到 `30_engineering_execution_backlog_cn.md` 为准。本文仍作为 hot path、hardware 和 storage 风险边界参考。
+
 ## 1. 本文件结论
 
 Phase 1 只做 Distributed memory-native GPU inference engine。分布式内存层覆盖 GPU HBM、peer GPU HBM、cross-node GPU HBM 和 CPU DRAM / pinned memory，不设计 persistent KVStore 或 storage-backed hot path。
