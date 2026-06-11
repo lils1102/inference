@@ -1,5 +1,7 @@
 # 00. Project Charter：Inference Fabric
 
+> Productization update: 当前开发目标已升级为一次性交付完整产品化首版。本文保留原始项目 charter 和风险边界；实际工程开发以 `21_productization_full_scope_cn.md` 到 `30_engineering_execution_backlog_cn.md` 以及 ADR-0011 为主。
+
 ## 1. 本文件结论
 
 Inference Fabric 是 Agent-aware、MoE-native、KV-memory-native、Distributed-native 的通用 GPU 推理引擎。它必须先具备通用 serving 入场券，再在 Agent/workflow、MoE、long-context、高 prefix reuse、多节点和 speculative runtime 上形成 Target Pareto SOTA。
