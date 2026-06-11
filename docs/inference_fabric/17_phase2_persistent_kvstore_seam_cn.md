@@ -1,5 +1,7 @@
 # 17. Phase 2 Persistent KVStore Seam
 
+> Productization update: 当前产品化首版已经把 persistent KV/state storage 纳入完整产品范围。本文保留“storage 不得进入每 token decode hot path”的风险边界；具体产品实现契约以 `26_memory_kv_state_storage_spec_cn.md` 为准。
+
 ## 1. 本文件结论
 
 Persistent all-flash KVCache Store 只属于 Phase 2 seam。它是未来基于 NVMe SSD 的持久化存储层，不是 Phase 1 内存层，不在 decode hot path，不作为 KV-owner-side attention 执行者。
