@@ -2,11 +2,11 @@
 
 ## 1. 本文件结论
 
-后续 Codex 任务必须从文档、ADR 和 benchmark plan 派生，不应直接进入 C++/CUDA/RDMA/scheduler/runtime/kernel 实现。每个实现任务前必须有模块边界、指标、MVP 和风险。
+后续 Codex 任务必须从文档、ADR、benchmark plan 和产品化规格派生。当前开发口径已经升级为一次性交付完整产品；具体工程 backlog 以 `30_engineering_execution_backlog_cn.md` 为准。
 
 ## 2. 模块目标
 
-把 Phase 1 拆成可派发的研究、设计、benchmark 和实现前置任务，保持 Phase 1/Phase 2 边界清晰。
+把完整产品拆成可派发的设计、实现、benchmark、测试、部署和发布任务，保持模块边界、接口契约、验收标准清晰。
 
 ## 3. 非目标
 
@@ -20,7 +20,7 @@
 
 ## 5. 核心设计
 
-任务按 Documentation -> Benchmark Harness -> Runtime Skeleton -> Module MVP -> Optimization RFC -> Kernel RFC 分层。每个任务必须包含输入文档、禁止项、验收指标、baseline、rollback。Phase 2 KVStore 相关任务只能是 seam 或未来 ADR，不得进入 Phase 1 implementation backlog。
+任务按 Contract -> Runtime Skeleton -> Distributed Runtime -> Optimization -> Product Hardening -> Release Candidate 分层。每个任务必须包含输入文档、禁止项、验收指标、baseline、rollback。Persistent KV/state storage 现在属于产品化首版范围，但不得进入 per-token decode hot path。
 
 ## 6. 数据结构草案
 
