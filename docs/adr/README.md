@@ -16,6 +16,7 @@
 | `0008-active_kv_as_execution_mode.md` | Accepted | Active KV 定义为 KV-owner-side attention execution mode |
 | `0009-intra_node_tp_cross_node_ep_default.md` | Proposed | 默认假设 intra-node TP、cross-node EP/DP/P-D/state sharding，需 benchmark 验证 |
 | `0010-pareto_sota_not_absolute_sota.md` | Accepted | 目标是 Target Pareto SOTA，不是所有场景绝对第一 |
+| `0011-productization_all_in_scope.md` | Accepted | 当前开发口径升级为一次性交付完整产品化首版，旧 Phase 表述仅作为历史风险边界 |
 
 ## Codex 使用规则
 
